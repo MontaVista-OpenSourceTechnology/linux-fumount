@@ -1559,6 +1559,16 @@ static int sd_compat_ioctl(struct block_device *bdev, fmode_t mode,
 }
 #endif
 
+#ifdef CONFIG_BLK_DEV_REMOVE
+static int sd_blkdev_remove(struct device *dev, struct device_attribute *attr)
+{
+	if (device_remove_file_self(dev, attr))
+		scsi_remove_device(to_scsi_device(dev));
+
+	return 0;
+}
+#endif
+
 static const struct block_device_operations sd_fops = {
 	.owner			= THIS_MODULE,
 	.open			= sd_open,
@@ -1571,6 +1581,9 @@ static const struct block_device_operations sd_fops = {
 	.check_events		= sd_check_events,
 	.revalidate_disk	= sd_revalidate_disk,
 	.unlock_native_capacity	= sd_unlock_native_capacity,
+#ifdef CONFIG_BLK_DEV_REMOVE
+	.remove                 = sd_blkdev_remove,
+#endif
 };
 
 /**
