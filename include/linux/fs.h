@@ -1561,6 +1561,11 @@ struct super_block {
 	   Cannot be worse than a second */
 	u32		   s_time_gran;
 
+#ifdef CONFIG_BLK_DEV_REMOVE
+	struct list_head        s_vfsmnt; /* list of vfsmount on SB */
+	struct semaphore        s_vfsmnt_sem; /* lock to protect list */
+#endif
+
 	/*
 	 * The next field is for VFS *only*. No filesystems have any business
 	 * even looking at it. You had been warned.

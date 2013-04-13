@@ -83,3 +83,8 @@ struct proc_mounts {
 #define proc_mounts(p) (container_of((p), struct proc_mounts, m))
 
 extern const struct seq_operations mounts_op;
+
+#ifdef CONFIG_BLK_DEV_REMOVE
+extern int do_umount(struct mount *mnt, int flags);
+extern void invalidate_bdev(struct block_device *bdev);
+#endif

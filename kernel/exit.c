@@ -551,6 +551,10 @@ void exit_files(struct task_struct *tsk)
 {
 	struct files_struct * files = tsk->files;
 
+#ifdef CONFIG_BLK_DEV_REMOVE
+	bdremove_removefdbytask(tsk);
+#endif
+
 	if (files) {
 		task_lock(tsk);
 		tsk->files = NULL;

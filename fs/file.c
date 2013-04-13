@@ -21,6 +21,7 @@
 #include <linux/spinlock.h>
 #include <linux/rcupdate.h>
 #include <linux/workqueue.h>
+#include <linux/mount.h>
 
 struct fdtable_defer {
 	spinlock_t lock;
