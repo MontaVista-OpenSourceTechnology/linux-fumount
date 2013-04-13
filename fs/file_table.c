@@ -135,6 +135,9 @@ struct file *get_empty_filp(void)
 	spin_lock_init(&f->f_lock);
 	eventpoll_init_file(f);
 	/* f->f_version: 0 */
+#ifdef CONFIG_FUMOUNT
+	atomic_set(&f->f_getcount, 0);
+#endif
 	return f;
 
 over:
@@ -220,15 +223,31 @@ static void drop_file_write_access(struct file *file)
 	file_release_write(file);
 }
 
-/* the real guts of fput() - releasing the last reference to file
+/**
+ * free_file_resources
+ * @file: the file to free the resources on
  */
-static void __fput(struct file *file)
+static void free_file_resources(struct file *file)
 {
-	struct dentry *dentry = file->f_path.dentry;
-	struct vfsmount *mnt = file->f_path.mnt;
-	struct inode *inode = dentry->d_inode;
+	struct dentry *dentry;
+	struct vfsmount *mnt;
+	struct inode *inode;
 
 	might_sleep();
+
+#ifdef CONFIG_FUMOUNT
+	spin_lock(&file->f_lock);
+	if (file->f_mode & FMODE_DEFUNCT) {
+		spin_unlock(&file->f_lock);
+		return;
+	}
+	file->f_mode |= FMODE_DEFUNCT;
+	spin_unlock(&file->f_lock);
+#endif
+
+	dentry = file->f_path.dentry;
+	mnt = file->f_path.mnt;
+	inode = dentry->d_inode;
 
 	fsnotify_close(file);
 	/*
@@ -251,7 +270,6 @@ static void __fput(struct file *file)
 		cdev_put(inode->i_cdev);
 	}
 	fops_put(file->f_op);
-	put_pid(file->f_owner.pid);
 	file_sb_list_del(file);
 	if ((file->f_mode & (FMODE_READ | FMODE_WRITE)) == FMODE_READ)
 		i_readcount_dec(inode);
@@ -259,18 +277,44 @@ static void __fput(struct file *file)
 		drop_file_write_access(file);
 	file->f_path.dentry = NULL;
 	file->f_path.mnt = NULL;
-	file_free(file);
 	dput(dentry);
 	mntput(mnt);
 }
 
+static void __fput(struct file *file)
+{
+	put_pid(file->f_owner.pid);
+	file_free(file);
+}
+
 void fput(struct file *file)
 {
-	if (atomic_long_dec_and_test(&file->f_count))
+#ifdef CONFIG_FUMOUNT
+	atomic_dec(&file->f_getcount);
+#endif
+	if (atomic_long_dec_and_test(&file->f_count)) {
+		free_file_resources(file);
 		__fput(file);
+	}
 }
 
 EXPORT_SYMBOL(fput);
+
+static inline int file_ok_for_get(struct file *file)
+{
+	int rv;
+
+#ifdef CONFIG_FUMOUNT
+	if (file->f_mode & FMODE_FUMOUNT)
+		return 0;
+#endif
+	rv = atomic_long_inc_not_zero(&file->f_count);
+#ifdef CONFIG_FUMOUNT
+	if (rv)
+		atomic_inc(&file->f_getcount);
+#endif
+	return rv;
+}
 
 struct file *fget(unsigned int fd)
 {
@@ -281,8 +325,7 @@ struct file *fget(unsigned int fd)
 	file = fcheck_files(files, fd);
 	if (file) {
 		/* File object ref couldn't be taken */
-		if (file->f_mode & FMODE_PATH ||
-		    !atomic_long_inc_not_zero(&file->f_count))
+		if (file->f_mode & FMODE_PATH || !file_ok_for_get(file))
 			file = NULL;
 	}
 	rcu_read_unlock();
@@ -301,7 +344,7 @@ struct file *fget_raw(unsigned int fd)
 	file = fcheck_files(files, fd);
 	if (file) {
 		/* File object ref couldn't be taken */
-		if (!atomic_long_inc_not_zero(&file->f_count))
+		if (!file_ok_for_get(file))
 			file = NULL;
 	}
 	rcu_read_unlock();
@@ -335,14 +378,14 @@ struct file *fget_light(unsigned int fd, int *fput_needed)
 	*fput_needed = 0;
 	if (atomic_read(&files->count) == 1) {
 		file = fcheck_files(files, fd);
-		if (file && (file->f_mode & FMODE_PATH))
+		if (file && (file->f_mode & (FMODE_PATH | FMODE_FUMOUNT)))
 			file = NULL;
 	} else {
 		rcu_read_lock();
 		file = fcheck_files(files, fd);
 		if (file) {
 			if (!(file->f_mode & FMODE_PATH) &&
-			    atomic_long_inc_not_zero(&file->f_count))
+			    file_ok_for_get(file))
 				*fput_needed = 1;
 			else
 				/* Didn't get the reference, someone's freed */
@@ -362,11 +405,15 @@ struct file *fget_raw_light(unsigned int fd, int *fput_needed)
 	*fput_needed = 0;
 	if (atomic_read(&files->count) == 1) {
 		file = fcheck_files(files, fd);
+#ifdef CONFIG_FUMOUNT
+		if (file && (file->f_mode & FMODE_FUMOUNT))
+			file = NULL;
+#endif
 	} else {
 		rcu_read_lock();
 		file = fcheck_files(files, fd);
 		if (file) {
-			if (atomic_long_inc_not_zero(&file->f_count))
+			if (file_ok_for_get(file))
 				*fput_needed = 1;
 			else
 				/* Didn't get the reference, someone's freed */
@@ -460,6 +507,16 @@ void file_sb_list_del(struct file *file)
 	}							\
 }
 
+#ifdef CONFIG_FUMOUNT
+#define do_file_list_for_each_entry_safe(__sb, __file, __file2)	\
+{								\
+	int i;							\
+	for_each_possible_cpu(i) {				\
+		struct list_head *list;				\
+		list = per_cpu_ptr((__sb)->s_files, i);		\
+		list_for_each_entry_safe((__file), (__file2), list, f_u.fu_list)
+#endif
+
 #else
 
 #define do_file_list_for_each_entry(__sb, __file)		\
@@ -470,6 +527,14 @@ void file_sb_list_del(struct file *file)
 
 #define while_file_list_for_each_entry				\
 }
+
+#ifdef CONFIG_FUMOUNT
+#define do_file_list_for_each_entry_safe(__sb, __file, __file2)	\
+{								\
+	struct list_head *list;					\
+	list = &(sb)->s_files;					\
+	list_for_each_entry_safe((__file), (__file2), list, f_u.fu_list)
+#endif
 
 #endif
 
@@ -509,6 +574,100 @@ retry:
 	} while_file_list_for_each_entry;
 	lg_global_unlock(files_lglock);
 }
+
+#ifdef CONFIG_FUMOUNT
+/**
+ *	fs_fumount_mark_files - Mark all files on mnt as in fumount
+ *	@mnt: mnt being fumounted
+ *
+ *	Go through all the files and if the mount matches, put them
+ *      in fumount mode and wake up any waiters.
+ */
+void fs_fumount_mark_files(struct vfsmount *mnt)
+{
+	struct super_block *sb = mnt->mnt_sb;
+	struct file *file;
+	struct inode *inode;
+
+	lg_global_lock(files_lglock);
+	do_file_list_for_each_entry(sb, file) {
+		if (file->f_vfsmnt == mnt) {
+			spin_lock(&file->f_lock);
+			file->f_mode |= FMODE_FUMOUNT;
+			spin_unlock(&file->f_lock);
+			inode = file->f_dentry->d_inode;
+			if (S_ISFIFO(inode->i_mode))
+				fifo_wake_up_partner(inode);
+			/* FIXME - what about lock waiters? */
+		}
+	} while_file_list_for_each_entry;
+	lg_global_unlock(files_lglock);
+}
+
+int fs_fumount_close_files(struct vfsmount *mnt)
+{
+	struct super_block *sb = mnt->mnt_sb;
+	struct file *file, *file2;
+	int inuse = 0;
+	struct list_head fu_list = LIST_HEAD_INIT(fu_list);
+	struct list_head process_list = LIST_HEAD_INIT(process_list);
+
+	lg_global_lock(files_lglock);
+	do_file_list_for_each_entry_safe(sb, file, file2) {
+		if (file->f_vfsmnt == mnt) {
+			BUG_ON(!(file->f_mode & FMODE_FUMOUNT));
+			if (atomic_read(&file->f_getcount)) {
+				/*
+				 * We do this here, and not in
+				 * fs_fumount_mark_files(), for two reasons:
+				 *   * The delay clears out the riff-raff
+				 *     of files without locks, and thus is
+				 *     more efficient.
+				 *   * The way this is done is racy, so
+				 *     it may need multiple calls to get
+				 *     the code out of the waits.
+				 */
+				get_file(file);
+				list_add(&file->fumount_list, &process_list);
+				inuse++;
+			} else {
+				/*
+				 * At this point no one is using the
+				 * file, and no one can use it any
+				 * more except close() because all the
+				 * fget() calls will not work.  So we
+				 * get the file so that close() cannot
+				 * finish the job, we will finish the
+				 * job here.  We have to do it twice
+				 * because we have to put it twice.
+				 */
+				get_file(file);
+				get_file(file);
+				list_move(&file->f_u.fu_list, &fu_list);
+			}
+		}
+	} while_file_list_for_each_entry;
+	lg_global_unlock(files_lglock);
+
+	list_for_each_entry_safe(file, file2, &fu_list, f_u.fu_list) {
+		filp_close(file, NULL); /* Calls fput() */
+		free_file_resources(file); /* Deletes file from list */
+		fput(file);
+	}
+
+	/*
+	 * Defer processing to here, we cannot remove file mapping while
+	 * holding the file_lglock.
+	 */
+	list_for_each_entry_safe(file, file2, &process_list, fumount_list) {
+		lock_fumount_wake_waiters(file);
+		mm_fumount_remove_mappings(file);
+		fput(file);
+	}
+
+	return inuse;
+}
+#endif /* CONFIG_FUMOUNT */
 
 void __init files_init(unsigned long mempages)
 { 

@@ -39,4 +39,12 @@ extern void put_unused_fd(unsigned int fd);
 
 extern void fd_install(unsigned int fd, struct file *file);
 
+#ifdef CONFIG_FUMOUNT
+void fs_fumount_mark_files(struct vfsmount *mnt);
+int fs_fumount_close_files(struct vfsmount *mnt);
+void mm_fumount_remove_mappings(struct file *file);
+void lock_fumount_wake_waiters(struct file *file);
+void fs_fumount_clear_cwd(struct vfsmount *mnt, struct path *root_path);
+#endif
+
 #endif /* __LINUX_FILE_H */

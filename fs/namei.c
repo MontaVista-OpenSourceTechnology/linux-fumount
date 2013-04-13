@@ -1147,6 +1147,11 @@ static int do_lookup(struct nameidata *nd, struct qstr *name,
 	int status = 1;
 	int err;
 
+#ifdef CONFIG_FUMOUNT
+	if (unlikely(mnt->mnt_flags & MNT_FUMOUNT))
+		return -ENOENT;
+#endif
+
 	/*
 	 * Rename seqlock is not required here because in the off chance
 	 * of a false negative due to a concurrent rename, we're going to

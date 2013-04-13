@@ -357,6 +357,11 @@ struct files_struct *dup_fd(struct files_struct *oldf, int *errorp)
 	for (i = open_files; i != 0; i--) {
 		struct file *f = *old_fds++;
 		if (f) {
+#ifdef CONFIG_FUMOUNT
+			if (f->f_mode & FMODE_FUMOUNT)
+				f = NULL;
+			else
+#endif
 			get_file(f);
 		} else {
 			/*

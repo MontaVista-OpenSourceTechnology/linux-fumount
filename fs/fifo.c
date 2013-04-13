@@ -14,21 +14,39 @@
 #include <linux/sched.h>
 #include <linux/pipe_fs_i.h>
 
-static void wait_for_partner(struct inode* inode, unsigned int *cnt)
+static int wait_for_partner(struct inode* inode, struct file *filp,
+			    unsigned int *cnt)
 {
 	int cur = *cnt;	
 
 	while (cur == *cnt) {
 		pipe_wait(inode->i_pipe);
+#ifdef CONFIG_FUMOUNT
+		/* if fumount has waken us up then get out */
+		if (filp->f_mode & FMODE_FUMOUNT)
+			return -EBADF;
+#endif
 		if (signal_pending(current))
-			break;
+			return -ERESTARTSYS;
 	}
+	return 0;
 }
 
 static void wake_up_partner(struct inode* inode)
 {
 	wake_up_interruptible(&inode->i_pipe->wait);
 }
+
+#ifdef CONFIG_FUMOUNT
+void fifo_wake_up_partner(struct inode *inode)
+{
+	wake_up_partner(inode);
+
+	/* Make sure it is out of the fifo code */
+	mutex_lock(&inode->i_mutex);
+	mutex_unlock(&inode->i_mutex);
+}
+#endif
 
 static int fifo_open(struct inode *inode, struct file *filp)
 {
@@ -67,8 +85,9 @@ static int fifo_open(struct inode *inode, struct file *filp)
 				 * seen a writer */
 				filp->f_version = pipe->w_counter;
 			} else {
-				wait_for_partner(inode, &pipe->w_counter);
-				if(signal_pending(current))
+				ret = wait_for_partner(inode, filp,
+						       &pipe->w_counter);
+				if (ret)
 					goto err_rd;
 			}
 		}
@@ -90,8 +109,8 @@ static int fifo_open(struct inode *inode, struct file *filp)
 			wake_up_partner(inode);
 
 		if (!pipe->readers) {
-			wait_for_partner(inode, &pipe->r_counter);
-			if (signal_pending(current))
+			ret = wait_for_partner(inode, filp, &pipe->r_counter);
+			if (ret)
 				goto err_wr;
 		}
 		break;
@@ -125,13 +144,11 @@ static int fifo_open(struct inode *inode, struct file *filp)
 err_rd:
 	if (!--pipe->readers)
 		wake_up_interruptible(&pipe->wait);
-	ret = -ERESTARTSYS;
 	goto err;
 
 err_wr:
 	if (!--pipe->writers)
 		wake_up_interruptible(&pipe->wait);
-	ret = -ERESTARTSYS;
 	goto err;
 
 err:
