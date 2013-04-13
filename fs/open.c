@@ -1023,6 +1023,22 @@ int filp_close(struct file *filp, fl_owner_t id)
 		return 0;
 	}
 
+#ifdef CONFIG_FUMOUNT
+	spin_lock(&filp->f_lock);
+	if (filp->f_mode & FMODE_CLOSED) {
+		spin_unlock(&filp->f_lock);
+		fput(filp);
+		return 0;
+	}
+	/*
+	 * Only disable this if closed by fumount, since it closes
+	 * everything.
+	 */
+	if (!id)
+		filp->f_mode |= FMODE_CLOSED;
+	spin_unlock(&filp->f_lock);
+#endif
+
 	if (filp->f_op && filp->f_op->flush)
 		retval = filp->f_op->flush(filp, id);
 

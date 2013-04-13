@@ -3111,6 +3111,150 @@ void mm_drop_all_locks(struct mm_struct *mm)
 	mutex_unlock(&mm_all_locks_mutex);
 }
 
+#ifdef CONFIG_FUMOUNT
+/*
+ * Each time a mapping is found that matches the file object, we get
+ * the mm_struct associated with the mapping, lock the mm_struct by
+ * incrementing the mm_count.  Then we take the mmap_sem semaphore.
+ * We search the vma list for the mm space, and remove all mappings
+ * associated with the file.
+ * This avoids having to search all of the process mms for file
+ * matches, while still appearing to be safe.  If the process
+ * terminates, then the vma list will be empty by the time I acquire
+ * the mm semaphore, since I added code in exit_mmap to take the
+ * semaphore before stealing all of the vmas.  It is held until all of
+ * the vmas are released, so finding an empty vma area means that the
+ * file references have been removed, which is the point of this whole
+ * exercise.  Once done, we drop the mmap_sem and mm_count and restart
+ * our search.  We are only done with the mappings for a given file
+ * when we traverse both the map lists without working on a mapping for
+ * a particular file object.
+ */
+static int remove_file_map(struct file *file, struct mm_struct *mm)
+{
+	int ret = 0;
+	struct vm_area_struct *next_vma;
+	struct vm_area_struct *vma;
+
+	down_write(&mm->mmap_sem);
+	for (vma = mm->mmap; vma; vma = next_vma) {
+		next_vma = vma->vm_next;
+		if (vma->vm_file == file) {
+			ret = do_munmap(mm, vma->vm_start,
+					(size_t)(vma->vm_end - vma->vm_start));
+			if (ret)
+				/* Low memory condition. Caller retries. */
+				break;
+		}
+	}
+	if (mm->exe_file == file)
+		set_mm_exe_file(mm, NULL);
+	up_write(&mm->mmap_sem);
+	return ret;
+}
+
+static int remove_shared_file_mappings(struct file *file,
+				       struct address_space *mapping)
+{
+	struct mm_struct *mm;
+	struct vm_area_struct *vma;
+	int ret = 0;
+
+	mutex_lock(&mapping->i_mmap_mutex);
+	while (!RB_EMPTY_ROOT(&mapping->i_mmap)) {
+		/*
+		 * I think the r_index (aka begin) should be 0 and h_index
+		 * (aka end should be ULONG_MAX to search the entire tree.
+		 * Hopefully I'm right....
+		 */
+		vma_interval_tree_foreach(vma, &mapping->i_mmap,
+					  0, ULONG_MAX) {
+			if (vma->vm_file == file)
+				goto found;
+		}
+		/* No mappings for this file, just quit. */
+		break;
+
+	found:
+		mm = vma->vm_mm;
+		atomic_inc(&mm->mm_count);
+		mutex_unlock(&mapping->i_mmap_mutex);
+		ret = remove_file_map(file, mm);
+		if (ret)
+			goto out;
+		mmdrop(mm);
+		mutex_lock(&mapping->i_mmap_mutex);
+	}
+	mutex_unlock(&mapping->i_mmap_mutex);
+out:
+	return ret;
+}
+
+/*
+ */
+static int remove_nonlinear_mappings(struct file *file,
+				     struct address_space *mapping)
+{
+	struct list_head *ptr, *temp;
+	struct vm_area_struct *vma;
+	struct mm_struct *mm;
+	int ret;
+
+	mutex_lock(&mapping->i_mmap_mutex);
+	while (!list_empty(&mapping->i_mmap_nonlinear)) {
+		list_for_each_safe(ptr, temp, &mapping->i_mmap_nonlinear) {
+			vma = list_entry(ptr, struct vm_area_struct,
+					     anon_vma_chain);
+			if (vma->vm_file == file)
+				goto found;
+		}
+		/* No mappings for this file, just quit. */
+		break;
+
+	found:
+		mm = vma->vm_mm;
+		atomic_inc(&mm->mm_count);
+		mutex_unlock(&mapping->i_mmap_mutex);
+		ret = remove_file_map(file, mm);
+		if (ret)
+			return ret;
+		mmdrop(mm);
+		mutex_lock(&mapping->i_mmap_mutex);
+	}
+	mutex_unlock(&mapping->i_mmap_mutex);
+	return 0;
+}
+
+/*
+ * remove_file_mappings is a back door to do_munmap when the file object is
+ * known but the context may be different from the process context that created
+ * the mapping in the first place.  Used by fumount to remove the mappings and
+ * release the associated file reference prior to forcing the file object
+ * closed.
+ */
+void mm_fumount_remove_mappings(struct file *file)
+{
+	struct address_space *mapping;
+
+	mapping = file->f_mapping;
+	if (!mapping)
+		return;
+
+check_for_maps:
+	if (remove_shared_file_mappings(file, mapping)) {
+		printk(KERN_DEBUG "%s: incomplete shared map removal,"
+		       "retry\n", __func__);
+		goto check_for_maps;
+	}
+
+	if (remove_nonlinear_mappings(file, mapping)) {
+		printk(KERN_DEBUG "%s: incomplete nonlinear"
+		       "map removal, retry\n", __func__);
+		goto check_for_maps;
+	}
+}
+#endif /* CONFIG_FUMOUNT */
+
 /*
  * initialise the VMA slab
  */

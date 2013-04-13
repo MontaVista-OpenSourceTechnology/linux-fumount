@@ -310,6 +310,11 @@ struct files_struct *dup_fd(struct files_struct *oldf, int *errorp)
 	for (i = open_files; i != 0; i--) {
 		struct file *f = *old_fds++;
 		if (f) {
+#ifdef CONFIG_FUMOUNT
+			if (f->f_mode & FMODE_FUMOUNT)
+				f = NULL;
+			else
+#endif
 			get_file(f);
 		} else {
 			/*
@@ -645,6 +650,22 @@ void do_close_on_exec(struct files_struct *files)
 	spin_unlock(&files->file_lock);
 }
 
+static inline int file_ok_for_get(struct file *file)
+{
+	int rv;
+
+#ifdef CONFIG_FUMOUNT
+	if (file->f_mode & FMODE_FUMOUNT)
+		return 0;
+#endif
+	rv = atomic_long_inc_not_zero(&file->f_count);
+#ifdef CONFIG_FUMOUNT
+	if (rv)
+		atomic_inc(&file->f_getcount);
+#endif
+	return rv;
+}
+
 struct file *fget(unsigned int fd)
 {
 	struct file *file;
@@ -654,8 +675,7 @@ struct file *fget(unsigned int fd)
 	file = fcheck_files(files, fd);
 	if (file) {
 		/* File object ref couldn't be taken */
-		if (file->f_mode & FMODE_PATH ||
-		    !atomic_long_inc_not_zero(&file->f_count))
+		if (file->f_mode & FMODE_PATH || !file_ok_for_get(file))
 			file = NULL;
 	}
 	rcu_read_unlock();
@@ -674,7 +694,7 @@ struct file *fget_raw(unsigned int fd)
 	file = fcheck_files(files, fd);
 	if (file) {
 		/* File object ref couldn't be taken */
-		if (!atomic_long_inc_not_zero(&file->f_count))
+		if (!file_ok_for_get(file))
 			file = NULL;
 	}
 	rcu_read_unlock();
@@ -708,14 +728,14 @@ struct file *fget_light(unsigned int fd, int *fput_needed)
 	*fput_needed = 0;
 	if (atomic_read(&files->count) == 1) {
 		file = fcheck_files(files, fd);
-		if (file && (file->f_mode & FMODE_PATH))
+		if (file && (file->f_mode & (FMODE_PATH | FMODE_FUMOUNT)))
 			file = NULL;
 	} else {
 		rcu_read_lock();
 		file = fcheck_files(files, fd);
 		if (file) {
 			if (!(file->f_mode & FMODE_PATH) &&
-			    atomic_long_inc_not_zero(&file->f_count))
+			    file_ok_for_get(file))
 				*fput_needed = 1;
 			else
 				/* Didn't get the reference, someone's freed */
@@ -736,11 +756,15 @@ struct file *fget_raw_light(unsigned int fd, int *fput_needed)
 	*fput_needed = 0;
 	if (atomic_read(&files->count) == 1) {
 		file = fcheck_files(files, fd);
+#ifdef CONFIG_FUMOUNT
+		if (file && (file->f_mode & FMODE_FUMOUNT))
+			file = NULL;
+#endif
 	} else {
 		rcu_read_lock();
 		file = fcheck_files(files, fd);
 		if (file) {
-			if (atomic_long_inc_not_zero(&file->f_count))
+			if (file_ok_for_get(file))
 				*fput_needed = 1;
 			else
 				/* Didn't get the reference, someone's freed */

@@ -23,6 +23,10 @@
 #include <linux/uaccess.h>
 #include <linux/proc_ns.h>
 #include <linux/magic.h>
+#ifdef CONFIG_FUMOUNT
+#include <linux/file.h>
+#include <linux/delay.h>
+#endif
 #include "pnode.h"
 #include "internal.h"
 
@@ -1206,6 +1210,12 @@ static int do_umount(struct mount *mnt, int flags)
 	struct super_block *sb = mnt->mnt.mnt_sb;
 	int retval;
 
+#ifdef CONFIG_FUMOUNT
+	if ((flags & (MNT_EXPIRE | MNT_DETACH | MNT_FORCE)) &&
+	    (flags & MNT_FFORCE))
+		return -EINVAL;
+#endif
+
 	retval = security_sb_umount(&mnt->mnt, flags);
 	if (retval)
 		return retval;
@@ -1250,6 +1260,68 @@ static int do_umount(struct mount *mnt, int flags)
 		sb->s_op->umount_begin(sb);
 	}
 
+#ifdef CONFIG_FUMOUNT
+	if (flags & MNT_FFORCE) {
+		unsigned int try_count = 60;
+		int files_left;
+		struct path root_path;
+
+		retval = kern_path("/", 0, &root_path);
+		if (retval)
+			return retval;
+
+		br_write_lock(&vfsmount_lock);
+		if (mnt->mnt.mnt_flags & MNT_FUMOUNT)
+			/* fumount already in progress */
+			retval = -EBUSY;
+		else if (&mnt->mnt == current->fs->root.mnt)
+			/* Can't fumount / */
+			retval = -EINVAL;
+		else if (!list_empty(&mnt->mnt_mounts))
+			/* Mount has other mount points */
+			retval = -EAGAIN;
+		if (retval) {
+			br_write_unlock(&vfsmount_lock);
+			path_put(&root_path);
+			return retval;
+		}
+
+		mnt->mnt.mnt_flags |= MNT_FUMOUNT;
+		br_write_unlock(&vfsmount_lock);
+
+		synchronize_rcu();
+
+		/*
+		 * At this point, no one should be able to open
+		 * anything new in the mount point.  The check in
+		 * do_lookup() should handle this.  Now mark all
+		 * the individual files so nothing can operate
+		 * on them any more.
+		 */
+		fs_fumount_mark_files(&mnt->mnt);
+
+		do {
+			try_count--;
+			ssleep(1);
+			fs_fumount_clear_cwd(&mnt->mnt, &root_path);
+		} while ((files_left = fs_fumount_close_files(&mnt->mnt))
+			 && try_count);
+
+		path_put(&root_path);
+
+		/*
+		 * For some reason we couldn't get all the code out of
+		 * fget for all the files.
+		 */
+		if (files_left)
+			return -EBUSY;
+
+		/*
+		 * At this point we should be able to do a normal
+		 * unmount.
+		 */
+	}
+#endif
 	/*
 	 * No sense to grab the lock for this test, but test itself looks
 	 * somewhat bogus. Suggestions for better replacement?
@@ -1311,8 +1383,13 @@ SYSCALL_DEFINE2(umount, char __user *, name, int, flags)
 	struct mount *mnt;
 	int retval;
 	int lookup_flags = 0;
+	int valid_flags = MNT_FORCE | MNT_DETACH | MNT_EXPIRE | UMOUNT_NOFOLLOW;
 
-	if (flags & ~(MNT_FORCE | MNT_DETACH | MNT_EXPIRE | UMOUNT_NOFOLLOW))
+#ifdef CONFIG_FUMOUNT
+	valid_flags |= MNT_FFORCE;
+#endif
+
+	if (flags & ~valid_flags)
 		return -EINVAL;
 
 	if (!may_mount())

@@ -81,6 +81,10 @@ static inline struct file * fcheck_files(struct files_struct *files, unsigned in
 
 	if (fd < fdt->max_fds)
 		file = rcu_dereference_check_fdtable(files, fdt->fd[fd]);
+#ifdef CONFIG_FUMOUNT
+	if (file && (file->f_mode & FMODE_FUMOUNT))
+		file = NULL;
+#endif
 	return file;
 }
 
