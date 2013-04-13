@@ -75,10 +75,15 @@ struct dentry;
 static inline struct file *__fcheck_files(struct files_struct *files, unsigned int fd)
 {
 	struct fdtable *fdt = rcu_dereference_raw(files->fdt);
+	struct file *file = NULL;
 
 	if (fd < fdt->max_fds)
-		return rcu_dereference_raw(fdt->fd[fd]);
-	return NULL;
+		file = rcu_dereference_raw(fdt->fd[fd]);
+#ifdef CONFIG_FUMOUNT
+	if (file && (file->f_mode & FMODE_FUMOUNT))
+		file = NULL;
+#endif
+	return file;
 }
 
 static inline struct file *fcheck_files(struct files_struct *files, unsigned int fd)
