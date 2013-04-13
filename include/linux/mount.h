@@ -47,6 +47,11 @@ struct mnt_namespace;
 
 #define MNT_INTERNAL	0x4000
 
+/*
+ * The mount is being forceably unmounted.
+ */
+#define MNT_FUMOUNT	0x8000
+
 struct vfsmount {
 	struct dentry *mnt_root;	/* root of the mounted tree */
 	struct super_block *mnt_sb;	/* pointer to superblock */
