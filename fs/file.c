@@ -22,6 +22,7 @@
 #include <linux/spinlock.h>
 #include <linux/rcupdate.h>
 #include <linux/workqueue.h>
+#include <linux/mount.h>
 
 int sysctl_nr_open __read_mostly = 1024*1024;
 int sysctl_nr_open_min = BITS_PER_LONG;
@@ -424,6 +425,10 @@ void exit_files(struct task_struct *tsk)
 {
 	struct files_struct * files = tsk->files;
 
+#ifdef CONFIG_BLK_DEV_REMOVE
+	bdremove_removefdbytask(tsk);
+#endif
+
 	if (files) {
 		task_lock(tsk);
 		tsk->files = NULL;
@@ -591,6 +596,14 @@ int __close_fd(struct files_struct *files, unsigned fd)
 	__clear_close_on_exec(fd, fdt);
 	__put_unused_fd(files, fd);
 	spin_unlock(&files->file_lock);
+#ifdef CONFIG_BLK_DEV_REMOVE
+	if (!(file->f_mode & FMODE_DEFUNCT) &&
+	    (S_ISBLK(file->f_dentry->d_inode->i_mode))) {
+		bdremove_removefd(current, fd,
+				  file->f_dentry->d_inode->i_bdev->bd_dev);
+	}
+#endif /* CONFIG_BLK_DEV_REMOVE */
+
 	return filp_close(file, files);
 
 out_unlock:

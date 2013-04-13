@@ -985,6 +985,12 @@ long do_sys_open(int dfd, const char __user *filename, int flags, umode_t mode)
 		} else {
 			fsnotify_open(f);
 			fd_install(fd, f);
+#ifdef CONFIG_BLK_DEV_REMOVE
+			if (S_ISBLK(f->f_dentry->d_inode->i_mode)) {
+				bdremove_insertfd(current, fd,
+					 f->f_dentry->d_inode->i_bdev->bd_dev);
+			}
+#endif
 		}
 	}
 	putname(tmp);
