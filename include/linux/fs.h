@@ -126,6 +126,15 @@ typedef void (dio_iodone_t)(struct kiocb *iocb, loff_t offset,
 /* File needs atomic accesses to f_pos */
 #define FMODE_ATOMIC_POS	((__force fmode_t)0x8000)
 
+/* File's resources have been released */
+#define FMODE_DEFUNCT		((__force fmode_t)0x10000)
+
+/* filp_close has been run on the file */
+#define FMODE_CLOSED		((__force fmode_t)0x20000)
+
+/* fumount is forcing this file to fail */
+#define FMODE_FUMOUNT		((__force fmode_t)0x40000)
+
 /* File was opened by fanotify and shouldn't generate fanotify events */
 #define FMODE_NONOTIFY		((__force fmode_t)0x1000000)
 
@@ -822,6 +831,10 @@ struct file {
 #ifdef CONFIG_DEBUG_WRITECOUNT
 	unsigned long f_mnt_write_state;
 #endif
+#ifdef CONFIG_FUMOUNT
+    atomic_t			f_getcount;
+    struct list_head		fumount_list;
+#endif
 } __attribute__((aligned(4)));	/* lest something weird decides that 2 is OK */
 
 struct file_handle {
@@ -1223,6 +1236,7 @@ struct mm_struct;
 #define MNT_DETACH	0x00000002	/* Just detach from the tree */
 #define MNT_EXPIRE	0x00000004	/* Mark for expiry */
 #define UMOUNT_NOFOLLOW	0x00000008	/* Don't follow symlink on umount */
+#define MNT_FFORCE	0x00000010	/* Really forcibily umount */
 #define UMOUNT_UNUSED	0x80000000	/* Flag guaranteed to be unused */
 
 extern struct list_head super_blocks;
@@ -2580,6 +2594,10 @@ void inode_dio_done(struct inode *inode);
 extern const struct file_operations generic_ro_fops;
 
 #define special_file(m) (S_ISCHR(m)||S_ISBLK(m)||S_ISFIFO(m)||S_ISSOCK(m))
+
+#ifdef CONFIG_FUMOUNT
+extern void fifo_wake_up_partner(struct inode *);
+#endif
 
 extern int vfs_readlink(struct dentry *, char __user *, int, const char *);
 extern int page_readlink(struct dentry *, char __user *, int);
