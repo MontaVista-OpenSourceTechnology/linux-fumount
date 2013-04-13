@@ -90,6 +90,16 @@ source "fs/cachefiles/Kconfig"
 endmenu
 
 if BLOCK
+config BLK_DEV_REMOVE
+	bool "Block Device Removal support"
+	depends on FUMOUNT
+	help
+	This option provides the ability to hot remove a block device such
+	as SCSI or MD. It utilizes forced umount to clean up the mounted
+	filesystem on top of the to be remove disk. It also cleans up any
+	open file handles against the device node.
+	If unsure, say N.
+
 menu "CD-ROM/DVD Filesystems"
 
 source "fs/isofs/Kconfig"
