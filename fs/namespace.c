@@ -1151,7 +1151,7 @@ void umount_tree(struct mount *mnt, int propagate, struct list_head *kill)
 
 static void shrink_submounts(struct mount *mnt, struct list_head *umounts);
 
-static int do_umount(struct mount *mnt, int flags)
+int do_umount(struct mount *mnt, int flags)
 {
 	struct super_block *sb = mnt->mnt.mnt_sb;
 	int retval;
