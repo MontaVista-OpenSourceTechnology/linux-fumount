@@ -1614,6 +1614,10 @@ struct block_device_operations {
 	int (*getgeo)(struct block_device *, struct hd_geometry *);
 	/* this callback is with swap_lock and sometimes page table lock held */
 	void (*swap_slot_free_notify) (struct block_device *, unsigned long);
+#ifdef CONFIG_BLK_DEV_REMOVE
+	/* first param is self, second is parent disk if exist */
+	int (*remove) (struct device *dev, struct device_attribute *attr);
+#endif
 	struct module *owner;
 };
 

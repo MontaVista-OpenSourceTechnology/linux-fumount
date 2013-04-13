@@ -61,6 +61,7 @@ struct mount {
 	int mnt_group_id;		/* peer group identifier */
 	int mnt_expiry_mark;		/* true if marked for expiry */
 	struct hlist_head mnt_pins;
+	int mnt_ghosts;
 	struct path mnt_ex_mountpoint;
 };
 
@@ -135,3 +136,8 @@ static inline bool is_local_mountpoint(struct dentry *dentry)
 
 	return __is_local_mountpoint(dentry);
 }
+
+#ifdef CONFIG_BLK_DEV_REMOVE
+extern int do_umount(struct mount *mnt, int flags);
+extern void invalidate_bdev(struct block_device *bdev);
+#endif
