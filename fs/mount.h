@@ -74,3 +74,8 @@ struct proc_mounts {
 };
 
 extern const struct seq_operations mounts_op;
+
+#ifdef CONFIG_BLK_DEV_REMOVE
+extern int do_umount(struct mount *mnt, int flags);
+extern void invalidate_bdev(struct block_device *bdev);
+#endif

@@ -987,6 +987,12 @@ long do_sys_open(int dfd, const char __user *filename, int flags, umode_t mode)
 			} else {
 				fsnotify_open(f);
 				fd_install(fd, f);
+#ifdef CONFIG_BLK_DEV_REMOVE
+				if (S_ISBLK(f->f_dentry->d_inode->i_mode)) {
+					bdremove_insertfd(current, fd,
+					  f->f_dentry->d_inode->i_bdev->bd_dev);
+				}
+#endif
 			}
 		}
 		putname(tmp);
@@ -1099,6 +1105,14 @@ SYSCALL_DEFINE1(close, unsigned int, fd)
 	__clear_close_on_exec(fd, fdt);
 	__put_unused_fd(files, fd);
 	spin_unlock(&files->file_lock);
+#ifdef CONFIG_BLK_DEV_REMOVE
+	if (!(filp->f_mode & FMODE_DEFUNCT) &&
+	    (S_ISBLK(filp->f_dentry->d_inode->i_mode))) {
+		bdremove_removefd(current, fd,
+				  filp->f_dentry->d_inode->i_bdev->bd_dev);
+	}
+#endif /* CONFIG_BLK_DEV_REMOVE */
+
 	retval = filp_close(filp, files);
 
 	/* can't restart close syscall because file table entry was cleared */

@@ -648,6 +648,12 @@ static inline void hd_struct_put(struct hd_struct *part)
 		__delete_partition(part);
 }
 
+#ifdef CONFIG_BLK_DEV_REMOVE
+extern ssize_t disk_remove_store(struct device *dev,
+				 struct device_attribute *attr,
+				 char *buf);
+#endif
+
 #else /* CONFIG_BLOCK */
 
 static inline void printk_all_partitions(void) { }

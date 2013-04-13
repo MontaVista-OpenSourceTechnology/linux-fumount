@@ -185,6 +185,10 @@ static struct super_block *alloc_super(struct file_system_type *type)
 		s->s_shrink.seeks = DEFAULT_SEEKS;
 		s->s_shrink.shrink = prune_super;
 		s->s_shrink.batch = 1024;
+#ifdef CONFIG_BLK_DEV_REMOVE
+		INIT_LIST_HEAD(&s->s_vfsmnt);
+		sema_init(&s->s_vfsmnt_sem, 1);
+#endif
 	}
 out:
 	return s;
