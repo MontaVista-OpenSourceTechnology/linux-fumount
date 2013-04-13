@@ -308,6 +308,11 @@ struct files_struct *dup_fd(struct files_struct *oldf, int *errorp)
 	for (i = open_files; i != 0; i--) {
 		struct file *f = *old_fds++;
 		if (f) {
+#ifdef CONFIG_FUMOUNT
+			if (f->f_mode & FMODE_FUMOUNT)
+				f = NULL;
+			else
+#endif
 			get_file(f);
 		} else {
 			/*
@@ -629,6 +634,22 @@ void do_close_on_exec(struct files_struct *files)
 	spin_unlock(&files->file_lock);
 }
 
+static inline int file_ok_for_get(struct file *file)
+{
+	int rv;
+
+#ifdef CONFIG_FUMOUNT
+	if (file->f_mode & FMODE_FUMOUNT)
+		return 0;
+#endif
+	rv = atomic_long_inc_not_zero(&file->f_count);
+#ifdef CONFIG_FUMOUNT
+	if (rv)
+		atomic_inc(&file->f_getcount);
+#endif
+	return rv;
+}
+
 static struct file *__fget(unsigned int fd, fmode_t mask)
 {
 	struct files_struct *files = current->files;
@@ -638,8 +659,7 @@ static struct file *__fget(unsigned int fd, fmode_t mask)
 	file = fcheck_files(files, fd);
 	if (file) {
 		/* File object ref couldn't be taken */
-		if ((file->f_mode & mask) ||
-		    !atomic_long_inc_not_zero(&file->f_count))
+		if ((file->f_mode & mask) || !file_ok_for_get(file))
 			file = NULL;
 	}
 	rcu_read_unlock();
@@ -680,6 +700,9 @@ static unsigned long __fget_light(unsigned int fd, fmode_t mask)
 	struct files_struct *files = current->files;
 	struct file *file;
 
+#ifdef CONFIG_FUMOUNT
+	mask |= FMODE_FUMOUNT;
+#endif
 	if (atomic_read(&files->count) == 1) {
 		file = __fcheck_files(files, fd);
 		if (!file || unlikely(file->f_mode & mask))
