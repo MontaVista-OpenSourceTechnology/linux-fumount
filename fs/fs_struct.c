@@ -6,6 +6,15 @@
 #include <linux/fs_struct.h>
 #include "internal.h"
 
+static void modify_fs_path(struct fs_struct *fs, struct path *old_path,
+			   struct path *new_path, const struct path *path)
+{
+	write_seqcount_begin(&fs->seq);
+	*old_path = *new_path;
+	*new_path = *path;
+	write_seqcount_end(&fs->seq);
+}
+
 /*
  * Replace the fs->{rootmnt,root} with {mnt,dentry}. Put the old values.
  * It can block.
@@ -16,10 +25,7 @@ void set_fs_root(struct fs_struct *fs, const struct path *path)
 
 	path_get(path);
 	spin_lock(&fs->lock);
-	write_seqcount_begin(&fs->seq);
-	old_root = fs->root;
-	fs->root = *path;
-	write_seqcount_end(&fs->seq);
+	modify_fs_path(fs, &old_root, &fs->root, path);
 	spin_unlock(&fs->lock);
 	if (old_root.dentry)
 		path_put(&old_root);
@@ -35,10 +41,7 @@ void set_fs_pwd(struct fs_struct *fs, const struct path *path)
 
 	path_get(path);
 	spin_lock(&fs->lock);
-	write_seqcount_begin(&fs->seq);
-	old_pwd = fs->pwd;
-	fs->pwd = *path;
-	write_seqcount_end(&fs->seq);
+	modify_fs_path(fs, &old_pwd, &fs->pwd, path);
 	spin_unlock(&fs->lock);
 
 	if (old_pwd.dentry)
@@ -52,6 +55,61 @@ static inline int replace_path(struct path *p, const struct path *old, const str
 	*p = *new;
 	return 1;
 }
+
+#ifdef CONFIG_FUMOUNT
+/*
+ * Note that this whole process is obviously racy, in that changes
+ * can sneak in while it is processing.  That's ok, it is retried.
+ * Making it non-racy would be extraordinarly complex.
+ */
+static void fumount_clear_one_path(struct fs_struct *fs, struct vfsmount *mnt,
+				   struct path *new_path, struct path *path)
+{
+	struct path old_path;
+
+	path_get(path);
+	modify_fs_path(fs, &old_path, new_path, path);
+	spin_unlock(&fs->lock);
+	rcu_read_unlock();
+	path_put(&old_path);
+}
+
+/*
+ * Move the cwd and root of any process that points to this mount for
+ * pwd to use '/'.
+ */
+void fs_fumount_clear_cwd(struct vfsmount *mnt, struct path *root_path)
+{
+	struct task_struct *p;
+	struct fs_struct *fs;
+
+	/*
+	 * We have to release the rcu lock (and fs lock, of course) to
+	 * put a path, so fumount_clear_one_path does that.
+	 * Unfortunately, that mean the processes could have all
+	 * changed, so we have to start over from scratch when this
+	 * happens.
+	 */
+restart:
+	rcu_read_lock();
+	for_each_process(p) {
+		fs = p->fs;
+		if (!fs)
+			continue;
+		spin_lock(&fs->lock);
+		if (fs->pwd.mnt == mnt) {
+			fumount_clear_one_path(fs, mnt, &fs->pwd, root_path);
+			goto restart;
+		}
+		if (fs->root.mnt == mnt) {
+			fumount_clear_one_path(fs, mnt, &fs->root, root_path);
+			goto restart;
+		}
+		spin_unlock(&fs->lock);
+	}
+	rcu_read_unlock();
+}
+#endif
 
 void chroot_fs_refs(const struct path *old_root, const struct path *new_root)
 {

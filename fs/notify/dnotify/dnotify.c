@@ -187,7 +187,11 @@ void dnotify_flush(struct file *filp, fl_owner_t id)
 	spin_lock(&fsn_mark->lock);
 	prev = &dn_mark->dn;
 	while ((dn = *prev) != NULL) {
-		if ((dn->dn_owner == id) && (dn->dn_filp == filp)) {
+		if ((
+#ifdef CONFIG_FUMOUNT
+			!id ||
+#endif
+			dn->dn_owner == id) && (dn->dn_filp == filp)) {
 			*prev = dn->dn_next;
 			kmem_cache_free(dnotify_struct_cache, dn);
 			dnotify_recalc_inode_mask(fsn_mark);
