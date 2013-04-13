@@ -52,10 +52,16 @@ struct mnt_namespace;
 
 #define MNT_INTERNAL	0x4000
 
+/*
+ * The mount is being forceably unmounted.
+ */
+#define MNT_FUMOUNT	0x8000
+
 #define MNT_LOCK_ATIME		0x040000
 #define MNT_LOCK_NOEXEC		0x080000
 #define MNT_LOCK_NOSUID		0x100000
 #define MNT_LOCK_NODEV		0x200000
+
 #define MNT_LOCK_READONLY	0x400000
 #define MNT_LOCKED		0x800000
 #define MNT_DOOMED		0x1000000
