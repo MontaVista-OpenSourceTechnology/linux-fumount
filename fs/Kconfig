@@ -68,6 +68,19 @@ source "fs/quota/Kconfig"
 source "fs/autofs4/Kconfig"
 source "fs/fuse/Kconfig"
 
+config FUMOUNT
+	bool "Forced Unmount support"
+	depends on !AUTOFS_FS && !AUTOFS4_FS
+	help
+	  This option gives the ability to (really) force unmount a file
+	  system. It closes all the open files, flushes their contents,
+	  releases file locks and tears down memory maps for the files.
+
+	  If AUTOFS_FS or AUTOFS4_FS is enabled FUMOUNT will not be
+	  supported since automount and fumount will not work together.
+
+	  If unsure, say N.
+
 config GENERIC_ACL
 	bool
 	select FS_POSIX_ACL

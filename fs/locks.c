@@ -504,6 +504,14 @@ static inline int locks_overlap(struct file_lock *fl1, struct file_lock *fl2)
  */
 static int posix_same_owner(struct file_lock *fl1, struct file_lock *fl2)
 {
+#ifdef CONFIG_FUMOUNT
+	/*
+	 * This is a forced unmount remove, always match as we are
+	 * removing all owners.
+	 */
+	if (!fl1->fl_owner)
+		return 1;
+#endif
 	if (fl1->fl_lmops && fl1->fl_lmops->lm_compare_owner)
 		return fl2->fl_lmops == fl1->fl_lmops &&
 			fl1->fl_lmops->lm_compare_owner(fl1, fl2);
@@ -567,6 +575,23 @@ static void __locks_delete_block(struct file_lock *waiter)
 	list_del_init(&waiter->fl_block);
 	waiter->fl_next = NULL;
 }
+
+#ifdef CONFIG_FUMOUNT
+void lock_fumount_wake_waiters(struct file *file)
+{
+	struct inode *inode = file->f_path.dentry->d_inode;
+	struct file_lock **before;
+
+	spin_lock(&inode->i_lock);
+	for_each_lock(inode, before) {
+		struct file_lock *fl = *before;
+
+		if (fl->fl_file == file)
+			wake_up(&fl->fl_wait);
+	}
+	spin_unlock(&inode->i_lock);
+}
+#endif
 
 static void locks_delete_block(struct file_lock *waiter)
 {
@@ -1136,6 +1161,11 @@ int posix_lock_file_wait(struct file *filp, struct file_lock *fl)
 	int error;
 	might_sleep ();
 	for (;;) {
+#ifdef CONFIG_FUMOUNT
+		smp_rmb();
+		if (filp->f_mode & FMODE_FUMOUNT)
+			return -EBADF;
+#endif
 		error = posix_lock_file(filp, fl, NULL);
 		if (error != FILE_LOCK_DEFERRED)
 			break;
@@ -1208,6 +1238,11 @@ int locks_mandatory_area(int read_write, struct inode *inode,
 	fl.fl_end = offset + count - 1;
 
 	for (;;) {
+#ifdef CONFIG_FUMOUNT
+		smp_rmb();
+		if (filp->f_mode & FMODE_FUMOUNT)
+			return -EBADF;
+#endif
 		error = __posix_lock_file(inode, &fl, NULL);
 		if (error != FILE_LOCK_DEFERRED)
 			break;
@@ -1708,6 +1743,11 @@ int flock_lock_file_wait(struct file *filp, struct file_lock *fl)
 	int error;
 	might_sleep();
 	for (;;) {
+#ifdef CONFIG_FUMOUNT
+		smp_rmb();
+		if (filp->f_mode & FMODE_FUMOUNT)
+			return -EBADF;
+#endif
 		error = flock_lock_file(filp, fl);
 		if (error != FILE_LOCK_DEFERRED)
 			break;
@@ -1926,6 +1966,11 @@ static int do_lock_file_wait(struct file *filp, unsigned int cmd,
 		return error;
 
 	for (;;) {
+#ifdef CONFIG_FUMOUNT
+		smp_rmb();
+		if (filp->f_mode & FMODE_FUMOUNT)
+			return -EBADF;
+#endif
 		error = vfs_lock_file(filp, cmd, fl, NULL);
 		if (error != FILE_LOCK_DEFERRED)
 			break;
