@@ -2779,10 +2779,7 @@ static int remove_shared_file_mappings(struct file *file,
 		mutex_unlock(&mapping->i_mmap_mutex);
 		ret = remove_file_map(file, mm_ptr);
 		if (ret)
-{
-    printk("mapping error: %d\n", ret);
 			goto out;
-}
 		mmdrop(mm_ptr);
 		mutex_lock(&mapping->i_mmap_mutex);
 	}
