@@ -2746,6 +2746,8 @@ static int remove_file_map(struct file *file, struct mm_struct *mm_ptr)
 				break;
 		}
 	}
+	if (mm_ptr->exe_file == file)
+		set_mm_exe_file(mm_ptr, NULL);
 	up_write(&mm_ptr->mmap_sem);
 	return ret;
 }
