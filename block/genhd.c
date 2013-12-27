@@ -988,7 +988,7 @@ static DEVICE_ATTR(capability, S_IRUGO, disk_capability_show, NULL);
 static DEVICE_ATTR(stat, S_IRUGO, part_stat_show, NULL);
 static DEVICE_ATTR(inflight, S_IRUGO, part_inflight_show, NULL);
 #ifdef CONFIG_BLK_DEV_REMOVE
-static DEVICE_ATTR(remove, S_IWUSR, disk_remove_store, NULL);
+static DEVICE_ATTR(remove, S_IWUSR, NULL, disk_remove_store);
 #endif
 #ifdef CONFIG_FAIL_MAKE_REQUEST
 static struct device_attribute dev_attr_fail =
