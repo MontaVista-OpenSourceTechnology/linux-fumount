@@ -678,6 +678,7 @@ static int do_dentry_open(struct file *f,
 	path_get(&f->f_path);
 	inode = f->f_inode = f->f_path.dentry->d_inode;
 	f->f_mapping = inode->i_mapping;
+	file_sb_list_add(f, inode->i_sb);
 
 	if (unlikely(f->f_flags & O_PATH)) {
 		f->f_mode = FMODE_PATH;
@@ -739,6 +740,7 @@ static int do_dentry_open(struct file *f,
 
 cleanup_all:
 	fops_put(f->f_op);
+	file_sb_list_del(f);
 	if (f->f_mode & FMODE_WRITER) {
 		put_write_access(inode);
 		__mnt_drop_write(f->f_path.mnt);
