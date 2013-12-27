@@ -183,7 +183,8 @@ static int bdremove_fumount(dev_t dev)
 }
 
 ssize_t disk_remove_store(struct device *dev,
-			  struct device_attribute *attr, char *buf)
+			  struct device_attribute *attr,
+			  const char *buf, size_t count)
 {
 	struct gendisk *disk = dev_to_disk(dev);
 	int ret = 0;
