@@ -77,6 +77,13 @@ extern void chroot_fs_refs(const struct path *, const struct path *);
 /*
  * file_table.c
  */
+#ifdef CONFIG_FUMOUNT
+extern void file_sb_list_add(struct file *f, struct super_block *sb);
+extern void file_sb_list_del(struct file *f);
+#else
+static inline void file_sb_list_add(struct file *f, struct super_block *sb) {}
+static inline void file_sb_list_del(struct file *f) {}
+#endif
 extern struct file *get_empty_filp(void);
 
 /*
