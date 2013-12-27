@@ -711,7 +711,7 @@ static inline void part_nr_sects_write(struct hd_struct *part, sector_t size)
 #ifdef CONFIG_BLK_DEV_REMOVE
 extern ssize_t disk_remove_store(struct device *dev,
 				 struct device_attribute *attr,
-				 char *buf);
+				 const char *buf, size_t count);
 #endif
 
 #else /* CONFIG_BLOCK */
