@@ -237,10 +237,6 @@ static struct super_block *alloc_super(struct file_system_type *type, int flags)
 		s->s_shrink.count_objects = super_cache_count;
 		s->s_shrink.batch = 1024;
 		s->s_shrink.flags = SHRINKER_NUMA_AWARE;
-#ifdef CONFIG_BLK_DEV_REMOVE
-		INIT_LIST_HEAD(&s->s_vfsmnt);
-		sema_init(&s->s_vfsmnt_sem, 1);
-#endif
 	}
 out:
 	return s;
