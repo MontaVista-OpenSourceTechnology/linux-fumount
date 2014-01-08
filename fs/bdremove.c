@@ -149,36 +149,35 @@ static int bdremove_fumount(dev_t dev)
 {
 	struct super_block *sb;
 	int ret = 0;
-	struct list_head *p, *temp;
 
 	sb = user_get_super(dev);
 	if (!sb)
 	    return 0;
 
-	down(&sb->s_vfsmnt_sem);
-	list_for_each_safe(p, temp, &sb->s_vfsmnt) {
-		struct vfsmount *mnt = list_entry(p, struct vfsmount,
-						  mnt_sblist);
-
-		up(&sb->s_vfsmnt_sem);
-		if(mnt->mnt_sb == sb) {
-			mntget(mnt);
-			/* we will do fumount to remove the mount point */
-			ret = do_umount(real_mount(mnt), MNT_FFORCE);
-			if (ret)
-				printk(KERN_WARNING
-				       "%s: umount failed: %d\n",
-				       __func__, ret);
-
-			up_read(&sb->s_umount);
-			mntput(mnt);
-			down_read(&sb->s_umount);
+	br_write_lock(&vfsmount_lock);
+	while (!list_empty(&sb->s_mounts)) {
+		struct mount *mnt = list_first_entry(&sb->s_mounts,
+					 struct mount, mnt_instance);
+		mntget(&mnt->mnt);
+		mnt->mnt_ghosts++;
+		br_write_unlock(&vfsmount_lock);
+		ret = do_umount(mnt, MNT_FFORCE);
+		br_write_lock(&vfsmount_lock);
+		mnt->mnt_ghosts--;
+		br_write_unlock(&vfsmount_lock);
+		up_read(&sb->s_umount);
+		mntput(&mnt->mnt);
+		down_read(&sb->s_umount);
+		if (ret) {
+			printk(KERN_WARNING "%s: umount failed: %d\n",
+			       __func__, ret);
+			goto out;
 		}
-		down(&sb->s_vfsmnt_sem);
+		br_write_lock(&vfsmount_lock);
 	}
-	up(&sb->s_vfsmnt_sem);
+	br_write_unlock(&vfsmount_lock);
+out:
 	drop_super(sb);
-
 	return ret;
 }
 
@@ -196,8 +195,12 @@ ssize_t disk_remove_store(struct device *dev,
 	disk_part_iter_init(&piter, disk, DISK_PITER_INCL_EMPTY);
 	while ((part = disk_part_iter_next(&piter))) {
 		devt = part_devt(part);
-		bdremove_fumount(devt);
+		ret = bdremove_fumount(devt);
+		if (ret)
+			goto out;
 		ret = bdremove_resetfd(devt);
+		if (ret && ret != -ENOENT)
+			goto out;
 
 		/* ok, now lets remove the partition from kernel */
 		bdev = bdget_disk(disk, part->partno);
@@ -217,10 +220,13 @@ ssize_t disk_remove_store(struct device *dev,
 		bdremove_fumount(devt);
 
 	ret = bdremove_resetfd(devt);
+	if (ret && ret != -ENOENT)
+		goto out;
 
 	if (disk->fops->remove)
 		ret = disk->fops->remove(disk, 0);
 
+out:
 	if (ret)
 		printk(KERN_WARNING "%s: blkdev remove failed\n", __func__);
 
