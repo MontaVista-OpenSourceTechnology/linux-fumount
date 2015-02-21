@@ -624,16 +624,19 @@ static void __locks_delete_block(struct file_lock *waiter)
 void lock_fumount_wake_waiters(struct file *file)
 {
 	struct inode *inode = file->f_path.dentry->d_inode;
-	struct file_lock **before;
+	struct file_lock_context *ctx;
+	struct file_lock *fl;
 
-	spin_lock(&inode->i_lock);
-	for_each_lock(inode, before) {
-		struct file_lock *fl = *before;
+	ctx = locks_get_lock_context(inode);
+	if (!ctx)
+		return -ENOMEM;
 
+	spin_lock(&ctx->flc_lock);
+	list_for_each_entry(fl, &ctx->flc_posix, fl_list) {
 		if (fl->fl_file == file)
 			wake_up(&fl->fl_wait);
 	}
-	spin_unlock(&inode->i_lock);
+	spin_unlock(&ctx->flc_lock);
 }
 #endif
 
