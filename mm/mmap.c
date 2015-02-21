@@ -3355,41 +3355,6 @@ out:
 }
 
 /*
- */
-static int remove_nonlinear_mappings(struct file *file,
-				     struct address_space *mapping)
-{
-	struct list_head *ptr, *temp;
-	struct vm_area_struct *vma;
-	struct mm_struct *mm;
-	int ret;
-
-	i_mmap_lock_write(mapping);
-	while (!list_empty(&mapping->i_mmap_nonlinear)) {
-		list_for_each_safe(ptr, temp, &mapping->i_mmap_nonlinear) {
-			vma = list_entry(ptr, struct vm_area_struct,
-					     anon_vma_chain);
-			if (vma->vm_file == file)
-				goto found;
-		}
-		/* No mappings for this file, just quit. */
-		break;
-
-	found:
-		mm = vma->vm_mm;
-		atomic_inc(&mm->mm_count);
-		i_mmap_unlock_write(mapping);
-		ret = remove_file_map(file, mm);
-		if (ret)
-			return ret;
-		mmdrop(mm);
-		i_mmap_lock_write(mapping);
-	}
-	i_mmap_unlock_write(mapping);
-	return 0;
-}
-
-/*
  * remove_file_mappings is a back door to do_munmap when the file object is
  * known but the context may be different from the process context that created
  * the mapping in the first place.  Used by fumount to remove the mappings and
@@ -3404,18 +3369,9 @@ void mm_fumount_remove_mappings(struct file *file)
 	if (!mapping)
 		return;
 
-check_for_maps:
-	if (remove_shared_file_mappings(file, mapping)) {
+	while (remove_shared_file_mappings(file, mapping))
 		printk(KERN_DEBUG "%s: incomplete shared map removal,"
 		       "retry\n", __func__);
-		goto check_for_maps;
-	}
-
-	if (remove_nonlinear_mappings(file, mapping)) {
-		printk(KERN_DEBUG "%s: incomplete nonlinear"
-		       "map removal, retry\n", __func__);
-		goto check_for_maps;
-	}
 }
 #endif /* CONFIG_FUMOUNT */
 
